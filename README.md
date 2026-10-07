@@ -1,3 +1,8 @@
+> **⚠ This repo is superseded.** Split into:
+> - [cnki-search](https://github.com/66666-design/cnki-search) — paper search (16 fields / 5 sort modes / expert query)
+> - [cnki-citation](https://github.com/66666-design/cnki-citation) — citation export (GB/T 7714 / EndNote / e-learning)
+> - [cnki-session](https://github.com/66666-design/cnki-session) — shared session layer (WAF solver)
+
 # cnki-cite — 知网搜索 + 批量导出引文格式
 
 > CNKI (China National Knowledge Infrastructure) paper search & batch citation
