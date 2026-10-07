@@ -24,12 +24,34 @@ python cnki_cite.py cite 大语言模型
 # 搜 2 页、只取前 5 条、附 EndNote+研学格式、另存结构化 JSON
 python cnki_cite.py cite 大语言模型 --pages 2 --top 5 --format all --json out.json
 
-# 按篇名字段搜（SU=主题 TI=篇名 KY=关键词 AB=摘要 FT=全文）
-python cnki_cite.py cite 知识图谱 --field TI
+# 按作者搜、按被引降序（--sort relevance|time|cited|download|overall）
+python cnki_cite.py cite 知识图谱 --field AU --sort cited
 
 # 已有导出加密 ID 时直接取引文
 python cnki_cite.py ids <exportId1> <exportId2>
 ```
+
+## 检索字段（16 种，`--field`）
+
+| 代码 | 含义 | 代码 | 含义 |
+|---|---|---|---|
+| SU | 主题（默认） | RP | 通讯作者 |
+| TKA | 篇关摘 | AF | 作者单位 |
+| KY | 关键词 | FU | 基金 |
+| TI | 篇名 | AB | 摘要 |
+| FT | 全文 | CO | 小标题 |
+| AU | 作者 | RF | 参考文献 |
+| FI | 第一作者 | CLC | 分类号 |
+| LY | 文献来源 | DOI | DOI |
+
+字段代码与排序代码均从 kns8s 前端 DOM `data-val` / `data-sort` 实抓（2026-10-08）。
+
+## 排序方式（`--sort`）
+
+`relevance`(相关度=FFD) / `time`(发表时间=PT，默认) / `cited`(被引=CF) /
+`download`(下载=DFR) / `overall`(综合=ZH)，均为降序。知网侧限制：排序只在
+800 万条记录以内有效。默认（`time`）与知网原生行为一致：首页不传排序参数，
+翻页用 `PT desc`。
 
 退出码：0 成功；2 验证码未通过；3 无结果；1 其他错误。
 

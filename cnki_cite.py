@@ -27,7 +27,8 @@ cnki_cite.py — 知网论文搜索 + 批量导出引文格式（GB/T 7714 / End
   python cnki_cite.py cite 知识图谱 --field TI -o refs.txt --format all --json out.json
   python cnki_cite.py ids <exportId> [<exportId> ...]      # 直接按导出 ID 取引文
 
-字段: SU=主题(默认) TI=篇名 KY=关键词 AB=摘要 FT=全文
+字段: SU=主题(默认) TKA=篇关摘 TI=篇名 AU=作者 等 16 种（见 FIELD_LABEL）
+排序: --sort relevance|time(默认)|cited|download|overall
 退出码: 0 成功; 2 验证码未通过; 3 无结果; 1 其他错误
 """
 import argparse
@@ -56,7 +57,21 @@ VERIFY_HOME = "https://kns.cnki.net/verify/home"
 CAPTCHA_GET = "https://kns.cnki.net/verify-api/get"
 CAPTCHA_CHECK = "https://kns.cnki.net/verify-api/web/check"
 
-FIELD_LABEL = {"SU": "主题", "TI": "篇名", "KY": "关键词", "AB": "摘要", "FT": "全文"}
+# 检索字段（2026-10-08 从 kns8s 前端下拉实抓 data-val）
+FIELD_LABEL = {
+    "SU": "主题", "TKA": "篇关摘", "KY": "关键词", "TI": "篇名", "FT": "全文",
+    "AU": "作者", "FI": "第一作者", "RP": "通讯作者", "AF": "作者单位",
+    "FU": "基金", "AB": "摘要", "CO": "小标题", "RF": "参考文献",
+    "CLC": "分类号", "LY": "文献来源", "DOI": "DOI",
+}
+# 排序方式（结果页排序条 data-sort 实抓；仅限 800 万条记录以内有效）
+SORT_CODES = {
+    "relevance": "FFD",   # 相关度
+    "time": "PT",         # 发表时间（知网默认）
+    "cited": "CF",        # 被引
+    "download": "DFR",    # 下载
+    "overall": "ZH",      # 综合
+}
 
 
 class CaptchaError(Exception):
@@ -204,18 +219,22 @@ class CNKI:
     # 翻页时的固定规格（2026-10-07 从 SPA 实抓）
     PAGE2_PRODUCTS = "CJFQ,CAPJ,ZHYX,CJTL,CDFD,CMFD,WBFD,CPFD,IPFD,CCND,SCSF,SCHF,SCSD,SNAD,CCJD,CJFN,CCVD"
 
-    def search(self, kw: str, pages: int = 1, field: str = "SU") -> list:
+    def search(self, kw: str, pages: int = 1, field: str = "SU", sort: str = "time") -> list:
+        label = FIELD_LABEL.get(field, "主题")
         qj = {
             "Platform": "", "Resource": "CROSSDB", "Classid": "WD0FTY92", "Products": "",
             "QNode": {"QGroup": [{"Key": "Subject", "Title": "", "Logic": 0, "Items": [
                 {"Field": field, "Value": kw, "Operator": "TOPRANK", "Logic": 0,
-                 "Vector": "", "Title": FIELD_LABEL.get(field, "主题")}],
+                 "Vector": "", "Title": label}],
                 "ChildItems": []}]},
             "ExScope": 1, "SimpTrad": "0", "SearchType": 2, "Rlang": "CHINESE",
             "KuaKuCode": "YSTT4HG0,LSTPFY1C,EMRPGLPA,JUP3MUPD,MPMFIG1A,WQ0UVIAA,"
                          "BLZOG7CK,PWFIRAGL,NN3FJMUV,NLBO1Z6R",
             "Expands": {}, "View": "changeDBCh", "SearchFrom": 1,
         }
+        # 排序：显式选择时第 1 页即带 sortField；默认不传（=知网原生默认，发表时间降序）
+        sort_code = SORT_CODES.get(sort, "PT")
+        page1_sort = "" if sort == "time" else sort_code
         self.s.get(SEARCH_PAGE, timeout=25)  # 预热拿 cookie
         rows = []
         turnpage = ""
@@ -227,7 +246,9 @@ class CNKI:
                     "boolSearch": "true",
                     "QueryJson": json.dumps(qj, ensure_ascii=False, separators=(",", ":")),
                     "pageNum": "1", "pageSize": "20",
-                    "sortField": "", "sortType": "", "dstyle": "listmode",
+                    "sortField": page1_sort,
+                    "sortType": "desc" if page1_sort else "",
+                    "dstyle": "listmode",
                     "productStr": "", "aside": f"({label}：{kw})",
                     "searchFrom": "资源范围：总库",
                     "subject": "", "language": "", "uniplatform": "",
@@ -241,7 +262,8 @@ class CNKI:
                     "boolSearch": "false",
                     "QueryJson": json.dumps(qj2, ensure_ascii=False, separators=(",", ":")),
                     "pageNum": str(pg), "pageSize": "20",
-                    "sortField": "PT", "sortType": "desc", "dstyle": "listmode",
+                    "sortField": page1_sort or "PT", "sortType": "desc",
+                    "dstyle": "listmode",
                     "boolSortSearch": "false",
                     "productStr": "", "aside": "",
                     "searchFrom": "资源范围：总库",
@@ -364,6 +386,8 @@ def main():
     p_s.add_argument("keyword")
     p_s.add_argument("--pages", type=int, default=1)
     p_s.add_argument("--field", choices=list(FIELD_LABEL), default="SU")
+    p_s.add_argument("--sort", choices=list(SORT_CODES), default="time",
+                     help="relevance=相关度 time=发表时间 cited=被引 download=下载 overall=综合")
     p_s.add_argument("--json", default="")
 
     p_c = sub.add_parser("cite", help="搜索并导出引文")
@@ -371,6 +395,7 @@ def main():
     p_c.add_argument("--pages", type=int, default=1)
     p_c.add_argument("--top", type=int, default=0, help="只取前 N 条，默认全部")
     p_c.add_argument("--field", choices=list(FIELD_LABEL), default="SU")
+    p_c.add_argument("--sort", choices=list(SORT_CODES), default="time")
     p_c.add_argument("-o", "--out", default="", help="引文输出文件，默认 <关键词>-引文.txt")
     p_c.add_argument("--format", choices=["gbt", "all"], default="gbt",
                      help="gbt=仅 GB/T 7714；all=另附 EndNote+研学")
@@ -389,13 +414,13 @@ def main():
     cnki = CNKI(state_file=state)
     try:
         if args.cmd == "search":
-            rows = cnki.search(args.keyword, args.pages, args.field)
+            rows = cnki.search(args.keyword, args.pages, args.field, args.sort)
             if not rows:
                 print("无结果", file=sys.stderr)
                 return 3
             for r in rows:
                 print(f"[{r['n']}] {r['title']} | {r['authors']} | {r['journal']} | "
-                      f"{r['date']} | 被引 {r['cited']}")
+                      f"{r['date']} | 被引 {r['cited']} | {r['db']}")
             if args.json:
                 Path(args.json).write_text(
                     json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -420,7 +445,7 @@ def main():
             return 0
 
         # cite
-        rows = cnki.search(args.keyword, args.pages, args.field)
+        rows = cnki.search(args.keyword, args.pages, args.field, args.sort)
         if not rows:
             print("搜索结果为空（0 条）。", file=sys.stderr)
             return 3
