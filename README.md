@@ -29,6 +29,9 @@ python cnki_cite.py cite 知识图谱 --field AU --sort cited
 
 # 已有导出加密 ID 时直接取引文
 python cnki_cite.py ids <exportId1> <exportId2>
+
+# 专业检索：知网检索表达式透传（AND/OR/NOT、% 通配、+ 并列、() 分组）
+python cnki_cite.py expert "TI='知识图谱' AND AU='刘峤'" --sort cited
 ```
 
 ## 检索字段（16 种，`--field`）
@@ -44,7 +47,22 @@ python cnki_cite.py ids <exportId1> <exportId2>
 | FI | 第一作者 | CLC | 分类号 |
 | LY | 文献来源 | DOI | DOI |
 
-字段代码与排序代码均从 kns8s 前端 DOM `data-val` / `data-sort` 实抓（2026-10-08）。
+字段代码与排序代码均从 kns8s 前端 DOM `data-val` / `data-sort` 实抓（2026-10-08），
+与知网专业检索官方字段表一致（另含 CF=被引频次，可写进检索表达式）。
+
+## 专业检索（`expert` 子命令）
+
+知网检索表达式原样透传，等价于网页「专业检索」。运算符：
+`AND` / `OR` / `NOT` 逻辑组合，`=` 精确、`%` 通配（含）、`+` 并列、
+`()` 分组、`$` 截词。字段用上表 16 个代码 + CF。示例：
+
+```bash
+cnki_cite.py expert "TI='生态' and KY='生态文明' and (AU % '陈' + '王')"
+cnki_cite.py expert "SU='碳排放' NOT TI='欧盟'"
+```
+
+底层走 `SearchType=4 + Field:EXPERT`（2026-10-08 实抓），表达式放 QueryJson 的
+Value 字段原样透传，翻页/排序/引文导出与普通搜索共用同一套流程。
 
 ## 排序方式（`--sort`）
 

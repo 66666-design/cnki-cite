@@ -51,6 +51,7 @@ from PIL import Image
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 SEARCH_PAGE = "https://kns.cnki.net/kns8s/search"
+EXPERT_PAGE = "https://kns.cnki.net/kns8s/AdvSearch?type=expert"
 GRID_URL = "https://kns.cnki.net/kns8s/brief/grid"
 EXPORT_URL = "https://kns.cnki.net/dm8/API/GetExport"
 VERIFY_HOME = "https://kns.cnki.net/verify/home"
@@ -219,26 +220,14 @@ class CNKI:
     # 翻页时的固定规格（2026-10-07 从 SPA 实抓）
     PAGE2_PRODUCTS = "CJFQ,CAPJ,ZHYX,CJTL,CDFD,CMFD,WBFD,CPFD,IPFD,CCND,SCSF,SCHF,SCSD,SNAD,CCJD,CJFN,CCVD"
 
-    def search(self, kw: str, pages: int = 1, field: str = "SU", sort: str = "time") -> list:
-        label = FIELD_LABEL.get(field, "主题")
-        qj = {
-            "Platform": "", "Resource": "CROSSDB", "Classid": "WD0FTY92", "Products": "",
-            "QNode": {"QGroup": [{"Key": "Subject", "Title": "", "Logic": 0, "Items": [
-                {"Field": field, "Value": kw, "Operator": "TOPRANK", "Logic": 0,
-                 "Vector": "", "Title": label}],
-                "ChildItems": []}]},
-            "ExScope": 1, "SimpTrad": "0", "SearchType": 2, "Rlang": "CHINESE",
-            "KuaKuCode": "YSTT4HG0,LSTPFY1C,EMRPGLPA,JUP3MUPD,MPMFIG1A,WQ0UVIAA,"
-                         "BLZOG7CK,PWFIRAGL,NN3FJMUV,NLBO1Z6R",
-            "Expands": {}, "View": "changeDBCh", "SearchFrom": 1,
-        }
-        # 排序：显式选择时第 1 页即带 sortField；默认不传（=知网原生默认，发表时间降序）
+    def _search_common(self, qj: dict, aside: str, pages: int,
+                       sort: str, search_from_url: str = SEARCH_PAGE) -> list:
+        """搜索共用流程：首页 boolSearch=true，翻页带 turnpage 令牌。"""
         sort_code = SORT_CODES.get(sort, "PT")
         page1_sort = "" if sort == "time" else sort_code
-        self.s.get(SEARCH_PAGE, timeout=25)  # 预热拿 cookie
+        self.s.get(search_from_url, timeout=25)  # 预热拿 cookie
         rows = []
         turnpage = ""
-        label = FIELD_LABEL.get(field, "主题")
 
         def fetch_page(pg: int):
             if pg == 1:
@@ -249,7 +238,7 @@ class CNKI:
                     "sortField": page1_sort,
                     "sortType": "desc" if page1_sort else "",
                     "dstyle": "listmode",
-                    "productStr": "", "aside": f"({label}：{kw})",
+                    "productStr": "", "aside": aside,
                     "searchFrom": "资源范围：总库",
                     "subject": "", "language": "", "uniplatform": "",
                     "CurPage": "1",
@@ -271,7 +260,7 @@ class CNKI:
                     "language": "", "uniplatform": "",
                 }
             return self._post_checked(GRID_URL, data=form, headers={
-                "Referer": SEARCH_PAGE, "X-Requested-With": "XMLHttpRequest"})
+                "Referer": search_from_url, "X-Requested-With": "XMLHttpRequest"})
 
         # 第 1 页带自愈：空结果可能是 WAF 软封（200+暂无数据），主动过验后重试
         page_rows = []
@@ -282,7 +271,7 @@ class CNKI:
                 break
             self.log("  第 1 页空结果（疑似 WAF 软封），尝试过验后重试 ...")
             try:
-                _solve(self.s, SEARCH_PAGE, log=self.log)
+                _solve(self.s, search_from_url, log=self.log)
             except (CaptchaError, RuntimeError):
                 pass
             time.sleep(1)
@@ -304,6 +293,40 @@ class CNKI:
         for i, row in enumerate(rows, 1):
             row["n"] = i
         return rows
+
+    def search(self, kw: str, pages: int = 1, field: str = "SU", sort: str = "time") -> list:
+        label = FIELD_LABEL.get(field, "主题")
+        qj = {
+            "Platform": "", "Resource": "CROSSDB", "Classid": "WD0FTY92", "Products": "",
+            "QNode": {"QGroup": [{"Key": "Subject", "Title": "", "Logic": 0, "Items": [
+                {"Field": field, "Value": kw, "Operator": "TOPRANK", "Logic": 0,
+                 "Vector": "", "Title": label}],
+                "ChildItems": []}]},
+            "ExScope": 1, "SimpTrad": "0", "SearchType": 2, "Rlang": "CHINESE",
+            "KuaKuCode": "YSTT4HG0,LSTPFY1C,EMRPGLPA,JUP3MUPD,MPMFIG1A,WQ0UVIAA,"
+                         "BLZOG7CK,PWFIRAGL,NN3FJMUV,NLBO1Z6R",
+            "Expands": {}, "View": "changeDBCh", "SearchFrom": 1,
+        }
+        return self._search_common(qj, f"({label}：{kw})", pages, sort)
+
+    def expert_search(self, expr: str, pages: int = 1, sort: str = "time") -> list:
+        """专业检索：知网检索表达式透传，如 TI='知识图谱' AND AU='刘峤'。"""
+        qj = {
+            "Platform": "", "Resource": "CROSSDB", "Classid": "WD0FTY92", "Products": "",
+            "QNode": {"QGroup": [
+                {"Key": "Subject", "Title": "", "Logic": 0, "Items": [
+                    {"Key": "Expert", "Title": "", "Logic": 0, "Field": "EXPERT",
+                     "Operator": 0, "Value": expr, "Value2": "", "options": {}}],
+                 "ChildItems": []},
+                {"Key": "ControlGroup", "Title": "", "Logic": 0, "Items": [],
+                 "ChildItems": []}]},
+            "ExScope": "1", "SimpTrad": "0", "SearchType": 4, "Rlang": "CHINESE",
+            "KuaKuCode": "YSTT4HG0,LSTPFY1C,EMRPGLPA,JUP3MUPD,MPMFIG1A,WQ0UVIAA,"
+                         "BLZOG7CK,PWFIRAGL,NN3FJMUV,NLBO1Z6R",
+            "Expands": {}, "View": "changeDBCh", "SearchFrom": 1,
+        }
+        return self._search_common(qj, f"({expr})", pages, sort,
+                                   search_from_url=EXPERT_PAGE)
 
     @staticmethod
     def _parse_rows(html: str) -> list:
@@ -406,6 +429,12 @@ def main():
     p_i.add_argument("-o", "--out", default="")
     p_i.add_argument("--format", choices=["gbt", "all"], default="gbt")
 
+    p_e = sub.add_parser("expert", help="专业检索：知网检索表达式透传")
+    p_e.add_argument("expr", help="如 TI='知识图谱' AND AU='刘峤'（bash 下注意引号转义）")
+    p_e.add_argument("--pages", type=int, default=1)
+    p_e.add_argument("--sort", choices=list(SORT_CODES), default="time")
+    p_e.add_argument("--json", default="")
+
     args = ap.parse_args()
     if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -441,6 +470,20 @@ def main():
             out = Path(args.out) if args.out else None
             if out:
                 out.write_text(text, encoding="utf-8")
+            cnki.save_state()
+            return 0
+
+        if args.cmd == "expert":
+            rows = cnki.expert_search(args.expr, args.pages, args.sort)
+            if not rows:
+                print("无结果", file=sys.stderr)
+                return 3
+            for r in rows:
+                print(f"[{r['n']}] {r['title']} | {r['authors']} | {r['journal']} | "
+                      f"{r['date']} | 被引 {r['cited']} | {r['db']}")
+            if args.json:
+                Path(args.json).write_text(
+                    json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
             cnki.save_state()
             return 0
 
